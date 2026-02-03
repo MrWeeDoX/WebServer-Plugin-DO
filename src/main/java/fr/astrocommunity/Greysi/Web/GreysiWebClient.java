@@ -303,7 +303,7 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
             JsonObject jsonResponse = JsonParser.parseString(response).getAsJsonObject();
 
             // Handle simple commands (start/stop/setProfile)
-            if (jsonResponse.has("command")) {
+            if (jsonResponse.get("command") != null) {
                 String command = jsonResponse.get("command").getAsString();
 
                 if (command.equals("start")) {
@@ -313,7 +313,7 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
                     System.out.println("[GreysiWeb] Command received: STOP");
                     bot.setRunning(false);
                 } else if (command.equals("setProfile")) {
-                    if (jsonResponse.has("profile")) {
+                    if (jsonResponse.get("profile") != null) {
                         String profileName = jsonResponse.get("profile").getAsString();
                         System.out.println("[GreysiWeb] Command received: SET PROFILE to " + profileName);
                         config.setConfigProfile(profileName);
@@ -322,7 +322,7 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
             }
 
             // Handle config write commands (new system)
-            if (jsonResponse.has("configCommands")) {
+            if (jsonResponse.get("configCommands") != null) {
                 JsonArray commands = jsonResponse.getAsJsonArray("configCommands");
                 for (int i = 0; i < commands.size(); i++) {
                     JsonObject cmd = commands.get(i).getAsJsonObject();
@@ -349,7 +349,7 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
 
             String configName = command.get("configName").getAsString();
             JsonObject configJson = command.get("configJson").getAsJsonObject();
-            boolean smartUpdate = command.has("smartUpdate") && command.get("smartUpdate").getAsBoolean();
+            boolean smartUpdate = command.get("smartUpdate") != null && command.get("smartUpdate").getAsBoolean();
 
             System.out.println("[GreysiWeb] Config write command received: " + configName);
 
