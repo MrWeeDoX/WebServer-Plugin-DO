@@ -14,14 +14,22 @@ import fr.astrocommunity.Greysi.Web.network.WebApiClient;
 import fr.astrocommunity.Greysi.Web.services.DataCollector;
 import fr.astrocommunity.Greysi.Web.services.DeathTracker;
 import fr.astrocommunity.Greysi.Web.services.SessionTracker;
-import fr.astrocommunity.Greysi.Web.services.LocalApiServer;
 import fr.astrocommunity.Greysi.Web.utils.JsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.google.gson.JsonArray;
+import com.google.gson.Gson;
 
 import javax.swing.*;
 import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
-import java.net.ServerSocket;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -47,12 +55,11 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
 
     // Network
     private WebApiClient apiClient;
-    private LocalApiServer localApiServer;
     private Timer timer;
     private String apiKey = null;
     private String botId;
-    private int localApiPort = 0;
     private boolean firstDataSent = false;
+    private final Gson gson = new Gson();
 
     public GreysiWebClient(HeroAPI hero, BotAPI bot, StatsAPI stats, EntitiesAPI entities,
                            StarSystemAPI starSystem, GroupAPI group, PetAPI pet, ConfigAPI config,
@@ -179,17 +186,6 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         System.out.println("[GreysiWeb] by Greysi/AstroCommunity");
         System.out.println("[GreysiWeb] Server: " + WEB_SERVER_URL);
         System.out.println("[GreysiWeb] Waiting for hero data...");
-
-        // Start local API server on an available port
-        try {
-            localApiPort = findAvailablePort(8000, 9000);
-            localApiServer = new LocalApiServer(localApiPort, config);
-            System.out.println("[GreysiWeb] Local API ready on port " + localApiPort);
-        } catch (IOException e) {
-            System.err.println("[GreysiWeb] Failed to start local API server: " + e.getMessage());
-            localApiPort = 0;
-        }
-
         System.out.println("==========================================");
 
         timer = new Timer("GreysiWebTimer", true);
@@ -206,12 +202,6 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         if (timer != null) {
             timer.cancel();
             timer = null;
-        }
-
-        // Stop local API server
-        if (localApiServer != null) {
-            localApiServer.shutdown();
-            localApiServer = null;
         }
 
         // Send offline status
@@ -299,9 +289,6 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         data.put("deaths", deathTracker.getDeathCount());
         data.put("deathLog", deathTracker.getDeathLog());
 
-        // Add local API port for config management
-        data.put("apiPort", localApiPort);
-
         return data;
     }
 
@@ -312,35 +299,156 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         try {
             if (response == null || response.isEmpty()) return;
 
-            if (response.contains("\"command\":\"start\"")) {
-                System.out.println("[GreysiWeb] Command received: START");
-                bot.setRunning(true);
-            } else if (response.contains("\"command\":\"stop\"")) {
-                System.out.println("[GreysiWeb] Command received: STOP");
-                bot.setRunning(false);
-            } else if (response.contains("\"command\":\"setProfile\"")) {
-                String profileName = JsonBuilder.extractJsonValue(response, "profile");
-                if (profileName != null && !profileName.isEmpty()) {
-                    System.out.println("[GreysiWeb] Command received: SET PROFILE to " + profileName);
-                    config.setConfigProfile(profileName);
+            // Parse JSON response
+            JsonObject jsonResponse = JsonParser.parseString(response).getAsJsonObject();
+
+            // Handle simple commands (start/stop/setProfile)
+            if (jsonResponse.has("command")) {
+                String command = jsonResponse.get("command").getAsString();
+
+                if (command.equals("start")) {
+                    System.out.println("[GreysiWeb] Command received: START");
+                    bot.setRunning(true);
+                } else if (command.equals("stop")) {
+                    System.out.println("[GreysiWeb] Command received: STOP");
+                    bot.setRunning(false);
+                } else if (command.equals("setProfile")) {
+                    if (jsonResponse.has("profile")) {
+                        String profileName = jsonResponse.get("profile").getAsString();
+                        System.out.println("[GreysiWeb] Command received: SET PROFILE to " + profileName);
+                        config.setConfigProfile(profileName);
+                    }
                 }
             }
+
+            // Handle config write commands (new system)
+            if (jsonResponse.has("configCommands")) {
+                JsonArray commands = jsonResponse.getAsJsonArray("configCommands");
+                for (int i = 0; i < commands.size(); i++) {
+                    JsonObject cmd = commands.get(i).getAsJsonObject();
+                    handleConfigCommand(cmd);
+                }
+            }
+
         } catch (Exception e) {
             System.err.println("[GreysiWeb] Command error: " + e.getMessage());
         }
     }
 
     /**
-     * Find an available port in the given range
+     * Handle config write command
      */
-    private int findAvailablePort(int startPort, int endPort) throws IOException {
-        for (int port = startPort; port <= endPort; port++) {
-            try (ServerSocket socket = new ServerSocket(port)) {
-                return port;
-            } catch (IOException ignored) {
-                // Port in use, try next
+    private void handleConfigCommand(JsonObject command) {
+        try {
+            String type = command.get("type").getAsString();
+
+            if (!type.equals("writeConfig")) {
+                System.err.println("[GreysiWeb] Unknown command type: " + type);
+                return;
             }
+
+            String configName = command.get("configName").getAsString();
+            JsonObject configJson = command.get("configJson").getAsJsonObject();
+            boolean smartUpdate = command.has("smartUpdate") && command.get("smartUpdate").getAsBoolean();
+
+            System.out.println("[GreysiWeb] Config write command received: " + configName);
+
+            // Write config to file
+            boolean success = writeConfig(configName, configJson, smartUpdate);
+
+            if (success) {
+                System.out.println("[GreysiWeb] Config written successfully: " + configName);
+            } else {
+                System.err.println("[GreysiWeb] Failed to write config: " + configName);
+            }
+
+        } catch (Exception e) {
+            System.err.println("[GreysiWeb] Error handling config command: " + e.getMessage());
+            e.printStackTrace();
         }
-        throw new IOException("No available port found in range " + startPort + "-" + endPort);
     }
+
+    /**
+     * Write config to appropriate location
+     */
+    private boolean writeConfig(String configName, JsonObject configJson, boolean smartUpdate) {
+        try {
+            // Find jar directory (go back from classes directory)
+            String classPath = getClass().getProtectionDomain().getCodeSource().getLocation().getPath();
+            File classFile = new File(classPath);
+            File jarDirectory = classFile.getParentFile(); // Should be the folder containing the .jar
+
+            File targetFile;
+
+            // Determine target location
+            if (configName.equals("config")) {
+                // Main config file - write directly to jar directory
+                targetFile = new File(jarDirectory, "config.json");
+            } else {
+                // Profile config - write to configs/ subdirectory
+                File configsDir = new File(jarDirectory, "configs");
+                if (!configsDir.exists()) {
+                    // Try alternative name "config" (without s)
+                    configsDir = new File(jarDirectory, "config");
+                    if (!configsDir.exists()) {
+                        configsDir.mkdirs();
+                        System.out.println("[GreysiWeb] Created configs directory: " + configsDir.getAbsolutePath());
+                    }
+                }
+                targetFile = new File(configsDir, configName + ".json");
+            }
+
+            System.out.println("[GreysiWeb] Writing config to: " + targetFile.getAbsolutePath());
+
+            // Smart Update logic - server already determined this is the current profile
+            if (smartUpdate && targetFile.exists()) {
+                System.out.println("[GreysiWeb] Smart update: creating backup");
+
+                // Create backup copy
+                File backupFile = new File(targetFile.getParent(), configName + "_backup.json");
+                Files.copy(targetFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+
+                // Switch to backup
+                if (!configName.equals("config")) {
+                    config.setConfigProfile(configName + "_backup");
+                    Thread.sleep(500); // Wait for switch
+                }
+
+                // Write new config
+                writeJsonToFile(configJson, targetFile);
+
+                // Switch back to updated config
+                if (!configName.equals("config")) {
+                    config.setConfigProfile(configName);
+                    Thread.sleep(500); // Wait for switch
+                }
+
+                // Delete backup
+                backupFile.delete();
+                System.out.println("[GreysiWeb] Smart update completed");
+
+                return true;
+            }
+
+            // Normal write (no smart update needed)
+            writeJsonToFile(configJson, targetFile);
+            System.out.println("[GreysiWeb] Config written successfully");
+            return true;
+
+        } catch (Exception e) {
+            System.err.println("[GreysiWeb] Error writing config: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * Write JSON object to file with pretty printing
+     */
+    private void writeJsonToFile(JsonObject json, File file) throws IOException {
+        try (FileWriter writer = new FileWriter(file)) {
+            gson.toJson(json, writer);
+        }
+    }
+
 }
