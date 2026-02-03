@@ -14,11 +14,14 @@ import fr.astrocommunity.Greysi.Web.network.WebApiClient;
 import fr.astrocommunity.Greysi.Web.services.DataCollector;
 import fr.astrocommunity.Greysi.Web.services.DeathTracker;
 import fr.astrocommunity.Greysi.Web.services.SessionTracker;
+import fr.astrocommunity.Greysi.Web.services.LocalApiServer;
 import fr.astrocommunity.Greysi.Web.utils.JsonBuilder;
 
 import javax.swing.*;
 import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
+import java.io.IOException;
+import java.net.ServerSocket;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -44,9 +47,11 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
 
     // Network
     private WebApiClient apiClient;
+    private LocalApiServer localApiServer;
     private Timer timer;
     private String apiKey = null;
     private String botId;
+    private int localApiPort = 0;
     private boolean firstDataSent = false;
 
     public GreysiWebClient(HeroAPI hero, BotAPI bot, StatsAPI stats, EntitiesAPI entities,
@@ -174,6 +179,17 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         System.out.println("[GreysiWeb] by Greysi/AstroCommunity");
         System.out.println("[GreysiWeb] Server: " + WEB_SERVER_URL);
         System.out.println("[GreysiWeb] Waiting for hero data...");
+
+        // Start local API server on an available port
+        try {
+            localApiPort = findAvailablePort(8000, 9000);
+            localApiServer = new LocalApiServer(localApiPort, config);
+            System.out.println("[GreysiWeb] Local API ready on port " + localApiPort);
+        } catch (IOException e) {
+            System.err.println("[GreysiWeb] Failed to start local API server: " + e.getMessage());
+            localApiPort = 0;
+        }
+
         System.out.println("==========================================");
 
         timer = new Timer("GreysiWebTimer", true);
@@ -191,6 +207,13 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
             timer.cancel();
             timer = null;
         }
+
+        // Stop local API server
+        if (localApiServer != null) {
+            localApiServer.shutdown();
+            localApiServer = null;
+        }
+
         // Send offline status
         if (apiClient != null && botId != null) {
             try {
@@ -276,6 +299,9 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         data.put("deaths", deathTracker.getDeathCount());
         data.put("deathLog", deathTracker.getDeathLog());
 
+        // Add local API port for config management
+        data.put("apiPort", localApiPort);
+
         return data;
     }
 
@@ -302,5 +328,19 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         } catch (Exception e) {
             System.err.println("[GreysiWeb] Command error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Find an available port in the given range
+     */
+    private int findAvailablePort(int startPort, int endPort) throws IOException {
+        for (int port = startPort; port <= endPort; port++) {
+            try (ServerSocket socket = new ServerSocket(port)) {
+                return port;
+            } catch (IOException ignored) {
+                // Port in use, try next
+            }
+        }
+        throw new IOException("No available port found in range " + startPort + "-" + endPort);
     }
 }
