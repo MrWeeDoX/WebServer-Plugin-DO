@@ -7,10 +7,15 @@ import eu.darkbot.api.game.galaxy.GateInfo;
 import eu.darkbot.api.game.other.EntityInfo;
 import eu.darkbot.api.managers.*;
 
+import java.io.File;
+import java.io.FileReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 /**
  * DataCollector - Collect all bot data for web transmission
@@ -133,6 +138,23 @@ public class DataCollector {
             c.put("currentProfile", config.getCurrentProfile());
             c.put("availableProfiles", new ArrayList<>(config.getConfigProfiles()));
             c.put("faction", hero.getEntityInfo().getFaction().name());
+
+            // Try to read API port from settings_API.json
+            try {
+                File settingsFile = new File(System.getProperty("user.dir"), "plugins/settings_API.json");
+                if (settingsFile.exists()) {
+                    try (FileReader reader = new FileReader(settingsFile, StandardCharsets.UTF_8)) {
+                        JsonObject settings = JsonParser.parseReader(reader).getAsJsonObject();
+                        // Use get() != null instead of has() for compatibility with older Gson versions
+                        if (settings.get("port") != null && !settings.get("port").isJsonNull()) {
+                            c.put("port", settings.get("port").getAsInt());
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Ignore - port will not be available
+            }
+
             data.put("config", c);
         } catch (Exception e) {
             // Ignore

@@ -18,7 +18,9 @@ import fr.astrocommunity.Greysi.Web.utils.JsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 import javax.swing.*;
 import java.awt.FlowLayout;
@@ -26,6 +28,7 @@ import java.awt.event.ActionEvent;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -44,6 +47,7 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
 
     private static final String WEB_SERVER_URL = "http://116.202.163.21:3000/api/bot/update";
     private static final int UPDATE_INTERVAL = 2000; // 2 secondes
+    private static GreysiWebClient instance; // Static reference for editor callback
 
     // Services
     private final DataCollector dataCollector;
@@ -59,7 +63,7 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
     private String apiKey = null;
     private String botId;
     private boolean firstDataSent = false;
-    private final Gson gson = new Gson();
+    private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
     public GreysiWebClient(HeroAPI hero, BotAPI bot, StatsAPI stats, EntitiesAPI entities,
                            StarSystemAPI starSystem, GroupAPI group, PetAPI pet, ConfigAPI config,
@@ -126,9 +130,14 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
                     // Show result
                     if (isValid) {
                         JOptionPane.showMessageDialog(this,
-                            "API Key valide et sauvegardée!\nLes changements sont appliqués automatiquement.",
+                            "API Key valide et sauvegardée!",
                             "Succès",
                             JOptionPane.INFORMATION_MESSAGE);
+
+                        // Apply new key immediately without restarting
+                        if (instance != null) {
+                            instance.applyNewApiKey(testKey);
+                        }
                     } else {
                         JOptionPane.showMessageDialog(this,
                             "Clé API invalide!\nVérifiez votre clé et réessayez.",
@@ -182,6 +191,7 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
 
     @Override
     public void install(Main main) {
+        instance = this; // Store instance for static access
         System.out.println("==========================================");
         System.out.println("[GreysiWeb] by Greysi/AstroCommunity");
         System.out.println("[GreysiWeb] Server: " + WEB_SERVER_URL);
@@ -197,8 +207,21 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         }, UPDATE_INTERVAL, UPDATE_INTERVAL);
     }
 
+    /**
+     * Apply new API key without restarting the bot.
+     * Just updates the key and resets the client so it reconnects on next tick.
+     */
+    void applyNewApiKey(String newKey) {
+        System.out.println("[GreysiWeb] Applying new API key...");
+        this.apiKey = newKey;
+        this.apiClient = null; // Force re-creation with new key on next sendDataToServer()
+        System.out.println("[GreysiWeb] API key applied, will reconnect on next tick.");
+    }
+
     @Override
     public void uninstall() {
+        instance = null; // Clear static reference
+
         if (timer != null) {
             timer.cancel();
             timer = null;
@@ -324,8 +347,9 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
             // Handle config write commands (new system)
             if (jsonResponse.get("configCommands") != null) {
                 JsonArray commands = jsonResponse.getAsJsonArray("configCommands");
-                for (int i = 0; i < commands.size(); i++) {
-                    JsonObject cmd = commands.get(i).getAsJsonObject();
+                // Use for-each instead of .size() (old Gson compatibility)
+                for (JsonElement element : commands) {
+                    JsonObject cmd = element.getAsJsonObject();
                     handleConfigCommand(cmd);
                 }
             }
@@ -373,27 +397,22 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
      */
     private boolean writeConfig(String configName, JsonObject configJson, boolean smartUpdate) {
         try {
-            // Find jar directory (go back from classes directory)
-            String classPath = getClass().getProtectionDomain().getCodeSource().getLocation().getPath();
-            File classFile = new File(classPath);
-            File jarDirectory = classFile.getParentFile(); // Should be the folder containing the .jar
+            // DarkBot working directory (where config.json and configs/ folder are)
+            File workingDir = new File(System.getProperty("user.dir"));
+            System.out.println("[GreysiWeb] Working directory: " + workingDir.getAbsolutePath());
 
             File targetFile;
 
             // Determine target location
             if (configName.equals("config")) {
-                // Main config file - write directly to jar directory
-                targetFile = new File(jarDirectory, "config.json");
+                // Main config file - write to working directory
+                targetFile = new File(workingDir, "config.json");
             } else {
                 // Profile config - write to configs/ subdirectory
-                File configsDir = new File(jarDirectory, "configs");
+                File configsDir = new File(workingDir, "configs");
                 if (!configsDir.exists()) {
-                    // Try alternative name "config" (without s)
-                    configsDir = new File(jarDirectory, "config");
-                    if (!configsDir.exists()) {
-                        configsDir.mkdirs();
-                        System.out.println("[GreysiWeb] Created configs directory: " + configsDir.getAbsolutePath());
-                    }
+                    configsDir.mkdirs();
+                    System.out.println("[GreysiWeb] Created configs directory: " + configsDir.getAbsolutePath());
                 }
                 targetFile = new File(configsDir, configName + ".json");
             }
@@ -401,33 +420,46 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
             System.out.println("[GreysiWeb] Writing config to: " + targetFile.getAbsolutePath());
 
             // Smart Update logic - server already determined this is the current profile
-            if (smartUpdate && targetFile.exists()) {
-                System.out.println("[GreysiWeb] Smart update: creating backup");
+            if (smartUpdate && targetFile.exists() && !configName.equals("config")) {
+                System.out.println("[GreysiWeb] Smart update: using async backup method");
 
                 // Create backup copy
-                File backupFile = new File(targetFile.getParent(), configName + "_backup.json");
+                final File backupFile = new File(targetFile.getParent(), configName + "_backup.json");
                 Files.copy(targetFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
 
-                // Switch to backup
-                if (!configName.equals("config")) {
-                    config.setConfigProfile(configName + "_backup");
-                    Thread.sleep(500); // Wait for switch
-                }
+                // Switch to backup profile
+                config.setConfigProfile(configName + "_backup");
 
-                // Write new config
-                writeJsonToFile(configJson, targetFile);
+                // Use Timer to delay next steps (avoids Thread.sleep which is blocked)
+                final File finalTargetFile = targetFile;
+                final String finalConfigName = configName;
+                new Timer().schedule(new TimerTask() {
+                    @Override
+                    public void run() {
+                        try {
+                            // Write new config to original file
+                            writeJsonToFile(configJson, finalTargetFile);
+                            System.out.println("[GreysiWeb] New config written, switching back...");
 
-                // Switch back to updated config
-                if (!configName.equals("config")) {
-                    config.setConfigProfile(configName);
-                    Thread.sleep(500); // Wait for switch
-                }
+                            // Switch back to updated config
+                            config.setConfigProfile(finalConfigName);
 
-                // Delete backup
-                backupFile.delete();
-                System.out.println("[GreysiWeb] Smart update completed");
+                            // Delete backup after another delay
+                            new Timer().schedule(new TimerTask() {
+                                @Override
+                                public void run() {
+                                    if (backupFile.delete()) {
+                                        System.out.println("[GreysiWeb] Smart update completed, backup deleted");
+                                    }
+                                }
+                            }, 500);
+                        } catch (Exception e) {
+                            System.err.println("[GreysiWeb] Smart update error: " + e.getMessage());
+                        }
+                    }
+                }, 500);
 
-                return true;
+                return true; // Async operation started
             }
 
             // Normal write (no smart update needed)
@@ -443,10 +475,10 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
     }
 
     /**
-     * Write JSON object to file with pretty printing
+     * Write JSON object to file with pretty printing (UTF-8 encoding)
      */
     private void writeJsonToFile(JsonObject json, File file) throws IOException {
-        try (FileWriter writer = new FileWriter(file)) {
+        try (FileWriter writer = new FileWriter(file, StandardCharsets.UTF_8)) {
             gson.toJson(json, writer);
         }
     }
