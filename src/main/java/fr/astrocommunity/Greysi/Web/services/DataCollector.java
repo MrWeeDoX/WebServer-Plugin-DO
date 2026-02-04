@@ -1,5 +1,6 @@
 package fr.astrocommunity.Greysi.Web.services;
 
+import com.github.manolo8.darkbot.Main;
 import eu.darkbot.api.game.entities.*;
 import eu.darkbot.api.game.galaxy.GalaxyGate;
 import eu.darkbot.api.game.galaxy.GalaxyInfo;
@@ -21,6 +22,7 @@ import com.google.gson.JsonParser;
  * DataCollector - Collect all bot data for web transmission
  */
 public class DataCollector {
+    private final Main main;
     private final HeroAPI hero;
     private final BotAPI bot;
     private final StatsAPI stats;
@@ -30,9 +32,10 @@ public class DataCollector {
     private final ConfigAPI config;
     private final GalaxySpinnerAPI galaxySpinner;
 
-    public DataCollector(HeroAPI hero, BotAPI bot, StatsAPI stats, EntitiesAPI entities,
+    public DataCollector(Main main, HeroAPI hero, BotAPI bot, StatsAPI stats, EntitiesAPI entities,
                          StarSystemAPI starSystem, GroupAPI group, ConfigAPI config,
                          GalaxySpinnerAPI galaxySpinner) {
+        this.main = main;
         this.hero = hero;
         this.bot = bot;
         this.stats = stats;
@@ -138,22 +141,6 @@ public class DataCollector {
             c.put("currentProfile", config.getCurrentProfile());
             c.put("availableProfiles", new ArrayList<>(config.getConfigProfiles()));
             c.put("faction", hero.getEntityInfo().getFaction().name());
-
-            // Try to read API port from settings_API.json
-            try {
-                File settingsFile = new File(System.getProperty("user.dir"), "plugins/settings_API.json");
-                if (settingsFile.exists()) {
-                    try (FileReader reader = new FileReader(settingsFile, StandardCharsets.UTF_8)) {
-                        JsonObject settings = JsonParser.parseReader(reader).getAsJsonObject();
-                        // Use get() != null instead of has() for compatibility with older Gson versions
-                        if (settings.get("port") != null && !settings.get("port").isJsonNull()) {
-                            c.put("port", settings.get("port").getAsInt());
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                // Ignore - port will not be available
-            }
 
             data.put("config", c);
         } catch (Exception e) {
@@ -369,5 +356,82 @@ public class DataCollector {
         } catch (Exception e) {
             // Ignore
         }
+    }
+
+    /**
+     * Collect hangars (ships owned by the player)
+     */
+    public void collectHangars(Map<String, Object> data) {
+        Map<String, Object> hangarsData = new HashMap<>();
+
+        try {
+            // Access hangar manager via backpage API
+            if (main != null && main.backpage != null && main.backpage.hangarManager != null) {
+                // Force update from backpage
+                main.backpage.hangarManager.updateHangarList();
+
+                var response = main.backpage.hangarManager.getHangarList();
+
+                if (response != null && response.getIsError() == 0) {
+                    var responseData = response.getData();
+                    if (responseData != null) {
+                        var ret = responseData.getRet();
+                        if (ret != null) {
+                            var shipInfos = ret.getShipInfos();
+
+                            Map<String, String> hangarsMap = new HashMap<>();
+
+                            if (shipInfos != null) {
+                                for (var ship : shipInfos) {
+                                    // Only include owned ships (owned > 0)
+                                    if (ship.getOwned() > 0) {
+                                        String shipName = ship.getLootId();  // "ship_phoenix", "ship_goliath", etc.
+                                        String lootId = String.valueOf(ship.getHangarId());
+
+                                        // Normalize ship name (remove "ship_" prefix and capitalize)
+                                        String normalizedName = normalizeShipName(shipName);
+                                        hangarsMap.put(normalizedName, lootId);
+                                    }
+                                }
+                            }
+
+                            hangarsData.put("hangars", hangarsMap);
+                            hangarsData.put("count", hangarsMap.size());
+                        }
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            // Silently ignore errors - hangars will just be empty
+        }
+
+        // Always add hangars to data (even if empty)
+        data.put("hangars", hangarsData.getOrDefault("hangars", new HashMap<>()));
+        data.put("hangarsCount", hangarsData.getOrDefault("count", 0));
+    }
+
+    /**
+     * Normalize ship name (from "ship_goliath" to "Goliath")
+     */
+    private String normalizeShipName(String apiShipName) {
+        // Remove 'ship_' prefix
+        String name = apiShipName.replace("ship_", "");
+
+        // Handle hyphenated names (G-Veteran, V-Revenge, etc.)
+        if (name.contains("-")) {
+            String[] parts = name.split("-");
+            StringBuilder result = new StringBuilder();
+            for (int i = 0; i < parts.length; i++) {
+                if (i > 0) result.append("-");
+                String part = parts[i];
+                result.append(part.substring(0, 1).toUpperCase());
+                result.append(part.substring(1).toLowerCase());
+            }
+            return result.toString();
+        }
+
+        // Capitalize first letter
+        return name.substring(0, 1).toUpperCase() + name.substring(1).toLowerCase();
     }
 }

@@ -50,12 +50,17 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
     private static GreysiWebClient instance; // Static reference for editor callback
 
     // Services
-    private final DataCollector dataCollector;
+    private DataCollector dataCollector;
     private final SessionTracker sessionTracker;
     private final DeathTracker deathTracker;
     private final HeroAPI hero;
     private final BotAPI bot;
+    private final StatsAPI stats;
+    private final EntitiesAPI entities;
+    private final StarSystemAPI starSystem;
+    private final GroupAPI group;
     private final ConfigAPI config;
+    private final GalaxySpinnerAPI galaxySpinner;
 
     // Network
     private WebApiClient apiClient;
@@ -70,11 +75,14 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
                            GalaxySpinnerAPI galaxySpinner) {
         this.hero = hero;
         this.bot = bot;
+        this.stats = stats;
+        this.entities = entities;
+        this.starSystem = starSystem;
+        this.group = group;
         this.config = config;
+        this.galaxySpinner = galaxySpinner;
 
-        // Initialize services
-        this.dataCollector = new DataCollector(hero, bot, stats, entities, starSystem,
-                                               group, config, galaxySpinner);
+        // Initialize services (DataCollector will be initialized in install() with Main)
         this.sessionTracker = new SessionTracker(stats);
         this.deathTracker = new DeathTracker(hero, starSystem);
     }
@@ -192,6 +200,11 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
     @Override
     public void install(Main main) {
         instance = this; // Store instance for static access
+
+        // Initialize DataCollector with Main object for hangar access
+        this.dataCollector = new DataCollector(main, hero, bot, stats, entities, starSystem,
+                                               group, config, galaxySpinner);
+
         System.out.println("==========================================");
         System.out.println("[GreysiWeb] by Greysi/AstroCommunity");
         System.out.println("[GreysiWeb] Server: " + WEB_SERVER_URL);
@@ -307,6 +320,7 @@ public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.
         dataCollector.collectEntities(data);
         dataCollector.collectTargetInfo(data);
         dataCollector.collectGalaxyInfo(data);
+        dataCollector.collectHangars(data);
 
         // Add death tracking
         data.put("deaths", deathTracker.getDeathCount());
