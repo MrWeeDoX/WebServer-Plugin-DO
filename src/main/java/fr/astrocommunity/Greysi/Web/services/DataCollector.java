@@ -96,20 +96,20 @@ public class DataCollector {
     }
 
     /**
-     * Collect stats data with session earnings
+     * Collect stats data - only send TOTAL values, let backend calculate earnings
+     * Backend calculates: earned = current_total - session_start_snapshot
      */
     public void collectStatsData(Map<String, Object> data, SessionTracker sessionTracker) {
         try {
             Map<String, Object> s = new HashMap<>();
+            // Send only TOTAL (absolute) values - backend will calculate earned
             s.put("credits", sessionTracker.getCurrentCredits());
             s.put("uridium", sessionTracker.getCurrentUridium());
             s.put("experience", sessionTracker.getCurrentExperience());
             s.put("honor", sessionTracker.getCurrentHonor());
             s.put("level", stats.getLevel());
-            s.put("credits_earned", sessionTracker.getCreditsEarned());
-            s.put("uridium_earned", sessionTracker.getUridiumEarned());
-            s.put("experience_earned", sessionTracker.getExperienceEarned());
-            s.put("honor_earned", sessionTracker.getHonorEarned());
+            // DO NOT send _earned values - they become incorrect after death
+            // Backend calculates them correctly using session snapshot
             s.put("cargo", stats.getStatValue(eu.darkbot.api.game.stats.Stats.General.CARGO));
             s.put("maxCargo", stats.getStatValue(eu.darkbot.api.game.stats.Stats.General.MAX_CARGO));
             data.put("stats", s);

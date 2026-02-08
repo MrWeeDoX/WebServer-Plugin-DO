@@ -45,7 +45,7 @@ import java.util.TimerTask;
 @Feature(name = "Greysi Web Client", description = "Send bot data to web server - by Greysi")
 public class GreysiWebClient implements Behaviour, Configurable<GreysiWebClient.Config> {
 
-    private static final String WEB_SERVER_URL = "http://116.202.163.21:3000/api/bot/update";
+    private static final String WEB_SERVER_URL = "https://do.astrocommunity.fr/api/bot/update";
     private static final int UPDATE_INTERVAL = 2000; // 2 secondes
     private static GreysiWebClient instance; // Static reference for editor callback
 

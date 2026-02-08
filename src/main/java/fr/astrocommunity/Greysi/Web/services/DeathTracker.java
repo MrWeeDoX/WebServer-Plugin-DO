@@ -17,6 +17,8 @@ public class DeathTracker {
     private int deathCount = 0;
     private List<Map<String, Object>> deathLog = new ArrayList<>();
     private boolean wasAlive = true;
+    private boolean justDied = false;
+    private boolean justRespawned = false;
 
     public DeathTracker(HeroAPI hero, StarSystemAPI starSystem) {
         this.hero = hero;
@@ -29,9 +31,20 @@ public class DeathTracker {
     public void tick() {
         try {
             boolean alive = hero.getHealth().getHp() > 0;
+            
+            // Detect death
             if (wasAlive && !alive) {
                 recordDeath();
+                justDied = true;
+                justRespawned = false;
             }
+            
+            // Detect respawn (was dead, now alive)
+            if (!wasAlive && alive) {
+                justRespawned = true;
+                justDied = false;
+            }
+            
             wasAlive = alive;
         } catch (Exception e) {
             // Ignore errors
@@ -68,11 +81,31 @@ public class DeathTracker {
     }
 
     /**
+     * Check if bot just died this tick
+     */
+    public boolean hasJustDied() {
+        boolean result = justDied;
+        justDied = false; // Reset flag after reading
+        return result;
+    }
+    
+    /**
+     * Check if bot just respawned this tick
+     */
+    public boolean hasJustRespawned() {
+        boolean result = justRespawned;
+        justRespawned = false; // Reset flag after reading
+        return result;
+    }
+
+    /**
      * Reset death tracking
      */
     public void reset() {
         deathCount = 0;
         deathLog.clear();
         wasAlive = true;
+        justDied = false;
+        justRespawned = false;
     }
 }
